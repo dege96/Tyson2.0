@@ -138,9 +138,9 @@
             </div>
             <div class="control-group">
                 <label>Slumpmässig rotation
-                    <span class="value-display" id="random-rotation-value">0</span>
+                    <span class="value-display" id="random-rotation-value">0.0019</span>
                 </label>
-                <input type="range" id="random-rotation" min="0" max="1" step="0.01" value="0">
+                <input type="range" id="random-rotation" min="0" max="0.01" step="0.0001" value="0.0019">
             </div>
         </div>
 
@@ -182,9 +182,9 @@
             </div>
             <div class="control-group">
                 <label>Omgivande ljus
-                    <span class="value-display" id="ambient-light-value">0.5</span>
+                    <span class="value-display" id="ambient-light-value">1</span>
                 </label>
-                <input type="range" id="ambient-light" min="0" max="1" step="0.1" value="0.5">
+                <input type="range" id="ambient-light" min="0" max="1" step="0.1" value="1">
             </div>
         </div>
 
@@ -192,7 +192,7 @@
             <h3>Bakgrund</h3>
             <div class="control-group">
                 <label>Bakgrundsfärg</label>
-                <input type="color" id="background-color" class="color-picker" value="#333333">
+                <input type="color" id="background-color" class="color-picker" value="#ca8181">
             </div>
             <div class="control-group" style="display: none;">
                 <label>Transparens
@@ -224,7 +224,7 @@
 
         // Skapa scen
         const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x333333);
+        scene.background = new THREE.Color('#ca8181');
 
         // Skapa kamera
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -236,10 +236,10 @@
         document.body.appendChild(renderer.domElement);
 
         // Lägg till ljus
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        const ambientLight = new THREE.AmbientLight(0xffffff, 1);
         scene.add(ambientLight);
         const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
-        directionalLight.position.set(5, 5, 5);
+        directionalLight.position.set(0, 0, 5);
         scene.add(directionalLight);
 
         // Lägg till kontroller
@@ -257,9 +257,14 @@
         let modelSize = 0.8;
         let autoRotate = true;
         let scaleX = 1.0, scaleY = 1.0, scaleZ = 1.0;
-        let randomRotation = 0;
+        let randomRotation = 0.0019;
         let rotationDirection = 0; // vinkel i radianer
         let rotationSpeedMagnitude = 0; // hur snabbt den snurrar
+        let isDragging = false;
+        let inertia = { x: 0, y: 0, z: 0 };
+        let lastRotation = { x: 0, y: 0, z: 0 };
+        let inertiaActive = false;
+        let lastTime = performance.now();
 
         settingsGear.addEventListener('click', () => {
             controlPanel.classList.toggle('visible');
@@ -368,7 +373,7 @@
 
         document.getElementById('random-rotation').addEventListener('input', (e) => {
             randomRotation = parseFloat(e.target.value);
-            document.getElementById('random-rotation-value').textContent = randomRotation;
+            document.getElementById('random-rotation-value').textContent = randomRotation.toFixed(4);
             if (randomRotation === 0) {
                 rotationDirection = 0;
                 rotationSpeedMagnitude = 0;
@@ -451,24 +456,80 @@
             }
         );
 
+        // Lyssna på drag och släpp på canvas
+        renderer.domElement.addEventListener('mousedown', () => {
+            isDragging = true;
+            controls.enabled = true;
+            inertiaActive = false;
+        });
+        renderer.domElement.addEventListener('touchstart', () => {
+            isDragging = true;
+            controls.enabled = true;
+            inertiaActive = false;
+        });
+        window.addEventListener('mouseup', () => {
+            if (isDragging) {
+                isDragging = false;
+                controls.enabled = false;
+                inertiaActive = true;
+                // Spara senaste hastighet
+                inertia.x = model.rotation.x - lastRotation.x;
+                inertia.y = model.rotation.y - lastRotation.y;
+                inertia.z = model.rotation.z - lastRotation.z;
+            }
+        });
+        window.addEventListener('touchend', () => {
+            if (isDragging) {
+                isDragging = false;
+                controls.enabled = false;
+                inertiaActive = true;
+                inertia.x = model.rotation.x - lastRotation.x;
+                inertia.y = model.rotation.y - lastRotation.y;
+                inertia.z = model.rotation.z - lastRotation.z;
+            }
+        });
+
         // Animation loop
         function animate() {
             requestAnimationFrame(animate);
-            
+            let now = performance.now();
+            let dt = (now - lastTime) / 1000; // sekunder
+            lastTime = now;
+
             if (model && autoRotate) {
                 model.rotation.y += rotationSpeed;
             }
             // Smooth random walk på riktning (pil)
             if (model && randomRotation > 0) {
                 // Ändra riktningen lite åt höger/vänster
-                rotationDirection += (Math.random() - 0.5) * 0.04 * randomRotation; // max ca ±0.02 rad/frame
+                rotationDirection += (Math.random() - 0.5) * randomRotation; // långsammare ändring
                 // Begränsa så det inte snurrar för snabbt
-                rotationSpeedMagnitude = 0.01 + 0.04 * randomRotation; // basfart + påverkan av reglaget
+                rotationSpeedMagnitude = randomRotation; // långsammare fart
                 // Snurra i riktningen
                 model.rotation.x += Math.cos(rotationDirection) * rotationSpeedMagnitude;
                 model.rotation.z += Math.sin(rotationDirection) * rotationSpeedMagnitude;
             }
-            
+
+            // Inertia-fysik
+            if (model) {
+                if (inertiaActive) {
+                    model.rotation.x += inertia.x;
+                    model.rotation.y += inertia.y;
+                    model.rotation.z += inertia.z;
+                    inertia.x *= 0.95;
+                    inertia.y *= 0.95;
+                    inertia.z *= 0.95;
+                    // När hastigheten är låg, stoppa inertia och aktivera controls igen
+                    if (Math.abs(inertia.x) < 0.0001 && Math.abs(inertia.y) < 0.0001 && Math.abs(inertia.z) < 0.0001) {
+                        inertiaActive = false;
+                        controls.enabled = true;
+                    }
+                }
+                lastRotation.x = model.rotation.x;
+                lastRotation.y = model.rotation.y;
+                lastRotation.z = model.rotation.z;
+            }
+
             controls.update();
             renderer.render(scene, camera);
         }
